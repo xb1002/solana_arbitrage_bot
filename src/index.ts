@@ -11,7 +11,7 @@ import { LAMPORTS_PER_SOL, Keypair, Connection,Transaction,
 import 'dotenv/config';
 import bs58 from 'bs58';
 import axios from 'axios';
-import { wait, instructionFormat } from './lib.js';
+import { wait, instructionFormat, pollTransactionStatus } from './lib.js';
 import fs from 'fs';
 
 // 导入环境变量
@@ -49,6 +49,8 @@ async function getQuote(quoteParams:QuoteGetRequest,jupCon:DefaultApi,name:strin
     }
 }
 
+// 发送交易列表
+let txList:string[] = [];
 async function sendTxToCons(tx:VersionedTransaction) {
     try {
         cons.map(async (con) => {
@@ -57,6 +59,10 @@ async function sendTxToCons(tx:VersionedTransaction) {
                 maxRetries: 0,
             }).then((signature) => {
                 console.log(`tx sent: ${signature}`)
+                if (txList.indexOf(signature) === -1) {
+                    txList.push(signature);
+                    pollTransactionStatus(signature,new Date().getTime());
+                }
             }).catch((err) => {
                 console.error(`sendTransaction error:`)
                 console.error(err)
@@ -68,6 +74,7 @@ async function sendTxToCons(tx:VersionedTransaction) {
 }
 
 // 循环异步更新blockhash
+
 
 // 监测套利机会
 interface monitorParams {
@@ -136,7 +143,7 @@ async function monitor(monitorParams:monitorParams) {
 
                 // build instructions
                 let ixs : TransactionInstruction[] = [];
-                let cu_num = 0;
+                let cu_num = 300000;
                 // 1. setup instructions
                 const setupInstructions = instructions.setupInstructions.map(instructionFormat);
                 ixs = ixs.concat(setupInstructions);
@@ -144,6 +151,19 @@ async function monitor(monitorParams:monitorParams) {
                 // 2. swap instructions
                 const swapInstructions = instructionFormat(instructions.swapInstruction);
                 ixs.push(swapInstructions);
+
+                // 3. 调用computeBudget设置cu
+                const computeUnitLimitInstruction = ComputeBudgetProgram.setComputeUnitLimit({
+                    units: cu_num,
+                })
+                ixs.push(computeUnitLimitInstruction);
+
+                // 4. 调用computeBudget设置优先费
+                const computeUnitPriceInstruction = ComputeBudgetProgram.setComputeUnitPrice({
+                    microLamports: 200,
+                })
+                ixs.push(computeUnitPriceInstruction);
+
 
                 // ALT
                 const addressLookupTableAccounts = await Promise.all(
@@ -168,10 +188,7 @@ async function monitor(monitorParams:monitorParams) {
                     await sendTxToCons(transaction);
                 } catch (err) {
                     console.error(`sendTxToCons error:`)
-                } finally {
-                    await wait(5000);
-                    process.exit(0);
-                }
+                } 
 
             } catch (err) {
                 console.error(`swapInstructionsPost error:`)
@@ -184,7 +201,7 @@ async function monitor(monitorParams:monitorParams) {
 
 
 // 主函数
-let waitTime = 1; // 1s
+let waitTime = 5; // 1s
 async function main() {
     // 监测套利机会
     await monitor({
