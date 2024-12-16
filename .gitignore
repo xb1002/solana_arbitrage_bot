@@ -1,0 +1,6 @@
+.env
+dist/
+node_modules/
+.vscode/
+test.*
+package-lock.json
