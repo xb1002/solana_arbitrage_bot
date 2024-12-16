@@ -1,6 +1,7 @@
 import { createJupiterApiClient, SwapRequest, Instruction, DefaultApi,
     QuoteGetRequest,QuoteGetSwapModeEnum,
-    QuoteResponseFromJSON
+    QuoteResponseFromJSON,
+    QuoteResponse
  } from '@jup-ag/api';
 import { LAMPORTS_PER_SOL, Keypair, Connection,Transaction,
     SystemProgram, PublicKey, TransactionInstruction,ComputeBudgetProgram,
@@ -19,7 +20,7 @@ const SECRET_KEY = process.env.SECRET_KEY;
 
 // 预设
 const status = 'confirmed';
-const feePayer = Keypair.fromSecretKey(new Uint8Array(bs58.decode(SECRET_KEY as string)));
+const payer = Keypair.fromSecretKey(new Uint8Array(bs58.decode(SECRET_KEY as string)));
 let tips = 0.00001;  // 0.00001 SOL
 let trade_sol = 0.005;  // 0.005 SOL
 
@@ -48,6 +49,26 @@ async function getQuote(quoteParams:QuoteGetRequest,jupCon:DefaultApi,name:strin
     }
 }
 
+async function sendTxToCons(tx:VersionedTransaction) {
+    try {
+        cons.map(async (con) => {
+            const signature = await con.sendTransaction(tx, {
+                skipPreflight: true,
+                maxRetries: 0,
+            }).then((signature) => {
+                console.log(`tx sent: ${signature}`)
+            }).catch((err) => {
+                console.error(`sendTransaction error:`)
+                console.error(err)
+            })
+        })
+    } catch (err) {
+        console.error(`sendTxToCons error:`)
+    }
+}
+
+// 循环异步更新blockhash
+
 // 监测套利机会
 interface monitorParams {
     pair1:string,
@@ -57,7 +78,6 @@ interface monitorParams {
 }
 async function monitor(monitorParams:monitorParams) {
     const {pair1,pair2,con,jupCon} = monitorParams;
-    let start = new Date().getTime();
     // 获取交易对信息
     const pair1_to_pair2 : QuoteGetRequest = {
         inputMint: pair1,
@@ -79,20 +99,84 @@ async function monitor(monitorParams:monitorParams) {
     }
     
     try {
-        const [quote0Resp,quote1Resp] = await Promise.all([
+        const [quote0Resp ,quote1Resp] = await Promise.all([
             getQuote(pair1_to_pair2,jupCon,"pair1_to_pair2"),
             getQuote(pair2_to_pair1,jupCon,"pair2_to_pair1")
         ])
         let p1 = Number(quote0Resp?.outAmount)/Number(quote0Resp?.inAmount);
         let p2 = Number(quote1Resp?.inAmount)/Number(quote1Resp?.outAmount);
-        if (p2/p1 > 1.01) {
+        if (p2/p1 > 1.003) {
             console.log(`pair1_to_pair2: ${p1}`)
             console.log(`pair2_to_pair1: ${p2}`)
             console.log(`pair2_to_pair1/pair1_to_pair2: ${p2/p1}`)
-            console.log(quote0Resp)
-            console.log(quote1Resp)
-            process.exit(0);
-        }
+            // console.log(quote0Resp)
+            // console.log(quote1Resp)
+            // process.exit(0);
+
+            let mergedQuoteResp = quote0Resp as QuoteResponse;
+            mergedQuoteResp.outputMint = (quote1Resp as QuoteResponse).outputMint;
+            mergedQuoteResp.outAmount = String(pair1_to_pair2.amount);
+            mergedQuoteResp.otherAmountThreshold = String(pair1_to_pair2.amount);
+            mergedQuoteResp.priceImpactPct = "0";
+            mergedQuoteResp.routePlan = mergedQuoteResp.routePlan.concat((quote1Resp as QuoteResponse).routePlan);
+
+            let swapData : SwapRequest = {
+                "userPublicKey": payer.publicKey.toBase58(),
+                "wrapAndUnwrapSol": false,
+                "useSharedAccounts": false,
+                "skipUserAccountsRpcCalls": true,
+                "quoteResponse": mergedQuoteResp,
+              }
+            try {
+                let start = new Date().getTime();
+                let instructions = await jupCon.swapInstructionsPost({ swapRequest: swapData })
+                console.log(`swapInstructionsPost time cost:`,new Date().getTime()-start)
+                // console.log(instructions)
+                // process.exit(0);
+
+                // build instructions
+                let ixs : TransactionInstruction[] = [];
+                let cu_num = 0;
+                // 1. setup instructions
+                const setupInstructions = instructions.setupInstructions.map(instructionFormat);
+                ixs = ixs.concat(setupInstructions);
+
+                // 2. swap instructions
+                const swapInstructions = instructionFormat(instructions.swapInstruction);
+                ixs.push(swapInstructions);
+
+                // ALT
+                const addressLookupTableAccounts = await Promise.all(
+                    instructions.addressLookupTableAddresses.map(async (address) => {
+                        const result = await con.getAddressLookupTable(new PublicKey(address));
+                        return result.value as AddressLookupTableAccount;
+                    })
+                );
+
+                // v0 tx
+                const { blockhash } = await con.getLatestBlockhash();
+                const messageV0 = new TransactionMessage({
+                    payerKey: payer.publicKey,
+                    recentBlockhash: blockhash,
+                    instructions: ixs,
+                }).compileToV0Message(addressLookupTableAccounts);
+                const transaction = new VersionedTransaction(messageV0);
+                transaction.sign([payer]);
+
+                // send tx
+                try {
+                    await sendTxToCons(transaction);
+                } catch (err) {
+                    console.error(`sendTxToCons error:`)
+                } finally {
+                    await wait(5000);
+                    process.exit(0);
+                }
+
+            } catch (err) {
+                console.error(`swapInstructionsPost error:`)
+            }
+        } 
     } catch (err) {
         console.error(`getQuote error:`)
     }
