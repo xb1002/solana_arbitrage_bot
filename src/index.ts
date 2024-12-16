@@ -10,7 +10,7 @@ import { LAMPORTS_PER_SOL, Keypair, Connection,Transaction,
 import 'dotenv/config';
 import bs58 from 'bs58';
 import axios from 'axios';
-import { wait, instructionFormat } from './lib';
+import { wait, instructionFormat } from './lib.js';
 import fs from 'fs';
 
 // 导入环境变量
@@ -34,6 +34,20 @@ const jupRpc = ["https://public.jupiterapi.com","https://quote-api.jup.ag/v6"]
 const jupCons : DefaultApi[] = jupRpc.map((rpcUrl) => createJupiterApiClient({basePath: rpcUrl}));
 
 
+// 自定义函数
+async function getQuote(quoteParams:QuoteGetRequest,jupCon:DefaultApi,name:string) {
+    let start = new Date().getTime();
+    try {
+        const quoteResp = await jupCon.quoteGet(quoteParams)
+        // console.log(quoteResp)
+        // console.log(`getQuote time cost:`,new Date().getTime()-start)
+        console.log(`${name} getQuote time cost:`,new Date().getTime()-start)
+        return quoteResp;
+    } catch (err) {
+        console.error(`${name} getQuote error:`)
+    }
+}
+
 // 监测套利机会
 interface monitorParams {
     pair1:string,
@@ -54,14 +68,6 @@ async function monitor(monitorParams:monitorParams) {
         maxAccounts: 30,
         swapMode: QuoteGetSwapModeEnum.ExactIn
     }
-    try {
-        const quote0Resp = await jupCon.quoteGet(pair1_to_pair2)
-        console.log(quote0Resp)
-        console.log("time cost:",new Date().getTime()-start)
-    } catch (err) {
-        console.error('get pair1_to_pair2 error:')
-    }
-
     const pair2_to_pair1 : QuoteGetRequest = {
         inputMint: pair2,
         outputMint: pair1,
@@ -71,25 +77,43 @@ async function monitor(monitorParams:monitorParams) {
         // maxAccounts: 30,
         swapMode: QuoteGetSwapModeEnum.ExactOut
     }
-    try{
-        const quote1Resp = await jupCon.quoteGet(pair2_to_pair1)
-        console.log(quote1Resp)
-        console.log("time cost:",new Date().getTime()-start)
+    
+    try {
+        const [quote0Resp,quote1Resp] = await Promise.all([
+            getQuote(pair1_to_pair2,jupCon,"pair1_to_pair2"),
+            getQuote(pair2_to_pair1,jupCon,"pair2_to_pair1")
+        ])
+        let p1 = Number(quote0Resp?.outAmount)/Number(quote0Resp?.inAmount);
+        let p2 = Number(quote1Resp?.inAmount)/Number(quote1Resp?.outAmount);
+        if (p2/p1 > 1.01) {
+            console.log(`pair1_to_pair2: ${p1}`)
+            console.log(`pair2_to_pair1: ${p2}`)
+            console.log(`pair2_to_pair1/pair1_to_pair2: ${p2/p1}`)
+            console.log(quote0Resp)
+            console.log(quote1Resp)
+            process.exit(0);
+        }
     } catch (err) {
-        console.error('get pair2_to_pair1 error:')
+        console.error(`getQuote error:`)
     }
 }
 
 
 // 主函数
+let waitTime = 1; // 1s
 async function main() {
     // 监测套利机会
-    monitor({
+    await monitor({
         pair1:"So11111111111111111111111111111111111111112",
         pair2:"H33XL6HHDReCVRgSApZpsXM7Hy7JGyLztRJaGxjapump",
         con:cons[0],
         jupCon:jupCons[0]
     })
+
+    console.log(`waiting for ${waitTime}s...`)
+    await wait(waitTime*1000);
+    console.log('start next round...')
+    main();
 }
 
 main().then(() => {
