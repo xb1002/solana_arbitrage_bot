@@ -16,24 +16,24 @@ import fs from 'fs';
 
 // 导入环境变量
 const QUICKNODE_RPC = process.env.QUICKNODE_API;
+const HELIUS_RPC = process.env.HELIUS_API;
 const SECRET_KEY = process.env.SECRET_KEY;
 
 // 预设
 const status = 'confirmed';
 const payer = Keypair.fromSecretKey(new Uint8Array(bs58.decode(SECRET_KEY as string)));
-let tips = 0.00001;  // 0.00001 SOL
-let trade_sol = 0.005;  // 0.005 SOL
+// let tips = 0.00001;  // 0.00001 SOL
+let trade_sol = 0.08;  // 单位 SOL
 
 // 构造RPC池
-const rpc : string[] = [QUICKNODE_RPC as string, clusterApiUrl('mainnet-beta')];
+const rpc : string[] = [QUICKNODE_RPC as string, clusterApiUrl('mainnet-beta'), HELIUS_RPC as string];
 // 构造连接池
-const cons : Connection[] = rpc.map((rpcUrl) => new Connection(rpcUrl, 'confirmed'));
+const cons : Connection[] = rpc.map((rpcUrl) => new Connection(rpcUrl, status));
 
 // 构造JUPITER RPC池
 const jupRpc = ["https://public.jupiterapi.com","https://quote-api.jup.ag/v6"]
 // 构造JUPITER连接池
 const jupCons : DefaultApi[] = jupRpc.map((rpcUrl) => createJupiterApiClient({basePath: rpcUrl}));
-
 
 // 自定义函数
 async function getQuote(quoteParams:QuoteGetRequest,jupCon:DefaultApi,name:string) {
@@ -49,8 +49,7 @@ async function getQuote(quoteParams:QuoteGetRequest,jupCon:DefaultApi,name:strin
     }
 }
 
-// 发送交易列表
-let txList:string[] = [];
+// 发送交易
 async function sendTxToCons(tx:VersionedTransaction) {
     try {
         cons.map(async (con) => {
@@ -59,10 +58,6 @@ async function sendTxToCons(tx:VersionedTransaction) {
                 maxRetries: 0,
             }).then((signature) => {
                 console.log(`tx sent: ${signature}`)
-                if (txList.indexOf(signature) === -1) {
-                    txList.push(signature);
-                    pollTransactionStatus(signature,new Date().getTime());
-                }
             }).catch((err) => {
                 console.error(`sendTransaction error:`)
                 console.error(err)
@@ -73,8 +68,15 @@ async function sendTxToCons(tx:VersionedTransaction) {
     }
 }
 
-// 循环异步更新blockhash
-
+// 每20s更新一次blockhash
+var blockhash = (await cons[1].getLatestBlockhash()).blockhash;
+setInterval(async () => {
+    try {
+        blockhash = (await cons[1].getLatestBlockhash()).blockhash;
+    } catch (err) {
+        console.error(`getLatestBlockhash error:`)
+    }
+}, 20000);
 
 // 监测套利机会
 interface monitorParams {
@@ -91,7 +93,7 @@ async function monitor(monitorParams:monitorParams) {
         outputMint: pair2,
         amount: LAMPORTS_PER_SOL*trade_sol,
         onlyDirectRoutes: false,
-        slippageBps: 20,
+        slippageBps: 0,
         maxAccounts: 30,
         swapMode: QuoteGetSwapModeEnum.ExactIn
     }
@@ -100,7 +102,7 @@ async function monitor(monitorParams:monitorParams) {
         outputMint: pair1,
         amount: LAMPORTS_PER_SOL*trade_sol,
         onlyDirectRoutes: false,
-        slippageBps: 20,
+        slippageBps: 0,
         // maxAccounts: 30,
         swapMode: QuoteGetSwapModeEnum.ExactOut
     }
@@ -174,7 +176,7 @@ async function monitor(monitorParams:monitorParams) {
                 );
 
                 // v0 tx
-                const { blockhash } = await con.getLatestBlockhash();
+                // const { blockhash } = await con.getLatestBlockhash();
                 const messageV0 = new TransactionMessage({
                     payerKey: payer.publicKey,
                     recentBlockhash: blockhash,
@@ -183,13 +185,14 @@ async function monitor(monitorParams:monitorParams) {
                 const transaction = new VersionedTransaction(messageV0);
                 transaction.sign([payer]);
 
+                console.log('generate tx cost:',new Date().getTime()-start)
                 // send tx
                 try {
                     await sendTxToCons(transaction);
+                    console.log('from generate to send tx cost:',new Date().getTime()-start)
                 } catch (err) {
                     console.error(`sendTxToCons error:`)
                 } 
-
             } catch (err) {
                 console.error(`swapInstructionsPost error:`)
             }
@@ -206,19 +209,18 @@ async function main() {
     // 监测套利机会
     await monitor({
         pair1:"So11111111111111111111111111111111111111112",
-        pair2:"H33XL6HHDReCVRgSApZpsXM7Hy7JGyLztRJaGxjapump",
+        pair2:"61V8vBaqAGMpgDQi4JcAwo1dmBGHsyhzodcPqnEVpump",
         con:cons[0],
         jupCon:jupCons[0]
     })
 
     console.log(`waiting for ${waitTime}s...`)
     await wait(waitTime*1000);
-    console.log('start next round...')
     main();
 }
 
 main().then(() => {
-    console.log('done');
+    console.log('start next round...')
 }).catch((err) => {
     console.error(err);
 });
