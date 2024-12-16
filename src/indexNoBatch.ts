@@ -24,6 +24,7 @@ const status = 'confirmed';
 const payer = Keypair.fromSecretKey(new Uint8Array(bs58.decode(SECRET_KEY as string)));
 // let tips = 0.00001;  // 0.00001 SOL
 let trade_sol = 0.008;  // 单位 SOL
+let threshold = 1.008; // 阈值
 
 // 构造RPC池
 const rpc : string[] = [QUICKNODE_RPC as string, clusterApiUrl('mainnet-beta'), HELIUS_RPC as string];
@@ -111,7 +112,7 @@ async function monitor(monitorParams:monitorParams) {
         let quote1Resp = await getQuote(pair2_to_pair1,jupCon,"pair2_to_pair1")
         let p1 = Number(quote0Resp?.outAmount)/Number(quote0Resp?.inAmount);
         let p2 = Number(quote1Resp?.inAmount)/Number(quote1Resp?.outAmount);
-        if (p2/p1 > 1.005) {
+        if (p2/p1 > threshold) {
             console.log(`pair1_to_pair2: ${p1}`)
             console.log(`pair2_to_pair1: ${p2}`)
             console.log(`pair2_to_pair1/pair1_to_pair2: ${p2/p1}`)
@@ -201,22 +202,31 @@ async function monitor(monitorParams:monitorParams) {
 
 
 // 主函数
-let waitTime = 5; // 1s
-async function main() {
+let waitTime = 3; // 1s
+let pair1 = "So11111111111111111111111111111111111111112"
+let pair2s = [
+    "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump",
+    "61V8vBaqAGMpgDQi4JcAwo1dmBGHsyhzodcPqnEVpump",
+    "5voS9evDjxF589WuEub5i4ti7FWQmZCsAsyD5ucbuRqM",
+    "42PZx7bPF1EMnP9L7vcjihTx7Nryxh81GG9Xs6fdpump",
+    "892DtJWGTgidC9uX4kPtWq5FXxaYgg8CBjhphtUwpump"
+]
+let num = 0;
+async function main(num:number) {
     // 监测套利机会
     await monitor({
-        pair1:"So11111111111111111111111111111111111111112",
-        pair2:"61V8vBaqAGMpgDQi4JcAwo1dmBGHsyhzodcPqnEVpump",
+        pair1:pair1,
+        pair2:pair2s[num],
         con:cons[0],
         jupCon:jupCons[0]
     })
 
     console.log(`waiting for ${waitTime}s...`)
     await wait(waitTime*1000);
-    main();
+    main((num+1)%pair2s.length);
 }
 
-main().then(() => {
+main(num).then(() => {
     console.log('start next round...')
 }).catch((err) => {
     console.error(err);
