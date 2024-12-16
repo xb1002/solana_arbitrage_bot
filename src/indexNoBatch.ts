@@ -88,33 +88,30 @@ interface monitorParams {
 async function monitor(monitorParams:monitorParams) {
     const {pair1,pair2,con,jupCon} = monitorParams;
     // 获取交易对信息
-    const pair1_to_pair2 : QuoteGetRequest = {
-        inputMint: pair1,
-        outputMint: pair2,
-        amount: LAMPORTS_PER_SOL*trade_sol,
-        onlyDirectRoutes: false,
-        slippageBps: 0,
-        maxAccounts: 30,
-        swapMode: QuoteGetSwapModeEnum.ExactIn
-    }
-    const pair2_to_pair1 : QuoteGetRequest = {
-        inputMint: pair2,
-        outputMint: pair1,
-        amount: LAMPORTS_PER_SOL*trade_sol,
-        onlyDirectRoutes: false,
-        slippageBps: 0,
-        // maxAccounts: 30,
-        swapMode: QuoteGetSwapModeEnum.ExactOut
-    }
-    
     try {
-        const [quote0Resp ,quote1Resp] = await Promise.all([
-            getQuote(pair1_to_pair2,jupCon,"pair1_to_pair2"),
-            getQuote(pair2_to_pair1,jupCon,"pair2_to_pair1")
-        ])
+        const pair1_to_pair2 : QuoteGetRequest = {
+            inputMint: pair1,
+            outputMint: pair2,
+            amount: LAMPORTS_PER_SOL*trade_sol,
+            onlyDirectRoutes: false,
+            slippageBps: 0,
+            maxAccounts: 30,
+            swapMode: QuoteGetSwapModeEnum.ExactIn
+        }
+        let quote0Resp = await getQuote(pair1_to_pair2,jupCon,"pair1_to_pair2")
+        const pair2_to_pair1 : QuoteGetRequest = {
+            inputMint: pair2,
+            outputMint: pair1,
+            amount: Number((quote0Resp as QuoteResponse).outAmount),
+            onlyDirectRoutes: false,
+            slippageBps: 0,
+            maxAccounts: 30,
+            swapMode: QuoteGetSwapModeEnum.ExactIn
+        }
+        let quote1Resp = await getQuote(pair2_to_pair1,jupCon,"pair2_to_pair1")
         let p1 = Number(quote0Resp?.outAmount)/Number(quote0Resp?.inAmount);
         let p2 = Number(quote1Resp?.inAmount)/Number(quote1Resp?.outAmount);
-        if (p2/p1 > 1.003) {
+        if (p2/p1 > 1.005) {
             console.log(`pair1_to_pair2: ${p1}`)
             console.log(`pair2_to_pair1: ${p2}`)
             console.log(`pair2_to_pair1/pair1_to_pair2: ${p2/p1}`)
